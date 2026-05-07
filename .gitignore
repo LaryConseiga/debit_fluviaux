@@ -1,0 +1,20 @@
+# Données volumineuses / sorties locales
+data/processed/*
+!data/processed/.gitkeep
+!data/processed/selected_gauges.csv
+!data/processed/build_manifest.json
+data/raw/*
+!data/raw/.gitkeep
+
+# Cache téléchargement Caravan (download_caravan.py, mode file)
+.cache/
+
+# Racine locale du jeu Caravan (Zenodo) — ne pas versionner
+Caravan/
+caravan_data/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env

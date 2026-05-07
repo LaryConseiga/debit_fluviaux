@@ -1,0 +1,42 @@
+# Configuration pour sélectionner les stations Caravan (Niger, Volta, Sénégal + pays).
+# Racine Caravan : même structure que le dépôt Zenodo CSV après extraction
+# (dossiers attributes/, timeseries/csv/, shapefiles/, etc.)
+
+caravan_root: null  # ou variable d'environnement CARAVAN_ROOT ; ex. "D:/Caravan"
+
+# Liste vide = aucun filtre pays. Sinon : noms tels qu'ils apparaissent dans Caravan (colonne country).
+countries:
+  - Mali
+  - Niger
+  - Burkina Faso
+  - Benin
+  - Nigeria
+  - Senegal
+  - Guinea
+  - Ghana
+  - Côte d'Ivoire
+
+# Bassins : priorité croissante = testé en premier (en cas de chevauchement de géométries).
+# bounds = [min_lon, min_lat, max_lon, max_lat] en WGS84.
+# Ces rectangles sont grossiers ; pour la production, préférez geojson (polygones HydroBASINS, etc.).
+basins:
+  - id: volta
+    priority: 1
+    bounds: [-3.5, 8.0, 1.8, 15.8]
+  - id: senegal
+    priority: 2
+    bounds: [-17.8, 10.0, -4.2, 17.8]
+  - id: niger
+    priority: 3
+    bounds: [-12.5, 5.0, 16.5, 25.5]
+
+# Fichier GeoJSON optionnel (FeatureCollection) : chaque entité doit avoir une propriété
+# "basin_id" parmi volta | senegal | niger. Si défini, remplace les bounds ci-dessus.
+basins_geojson: null  # ex. "data/config/basins_hydrobasins.geojson"
+
+# Vérifier que le fichier série temporelle existe pour chaque jauge retenue
+verify_timeseries_csv: true
+
+# Sorties (chemins relatifs à la racine du projet si non absolus)
+output_gauges_csv: data/processed/selected_gauges.csv
+output_manifest_json: data/processed/build_manifest.json

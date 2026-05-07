@@ -1,0 +1,22 @@
+# Correspondance conceptuelle → colonnes typiques dans les CSV Caravan (vérifier sur votre version).
+# Les séries journalières sont dans timeseries/csv/{sous_jeu}/{gauge_id}.csv
+
+forcings:
+  precipitation: total_precipitation_sum
+  pet_era5_land: potential_evaporation_sum_ERA5_LAND
+  pet_fao_pm: potential_evaporation_sum_FAO_PENMAN_MONTEITH
+  temperature_min: temperature_2m_min
+  temperature_max: temperature_2m_max
+
+target:
+  streamflow_mm_per_day: streamflow
+
+metadata_columns:
+  latitude: gauge_lat
+  longitude: gauge_lon
+  country: country
+  station_name: gauge_name
+  area_km2: area
+
+# Attributs statiques : voir attributes/{sous_jeu}/attributes_hydroatlas_*.csv
+# (noms exacts variables selon HydroATLAS / version Caravan — inspecter l'en-tête du fichier).
