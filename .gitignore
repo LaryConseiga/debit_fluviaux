@@ -1,6 +1,12 @@
-# Modèles et datasets trop volumineux pour GitHub
-ml_datasets/
+# Modèles trop volumineux pour GitHub
 trained_models_global/rf_global.pkl
+trained_models_global/lstm_global.keras
+trained_models_global/lstm_scalers_y.pkl
+
+# CSV bruts (130 MB) — remplacés par seasonal_q.csv et bias_means.csv
+ml_datasets/
+!ml_datasets/seasonal_q.csv
+!ml_datasets/bias_means.csv
 
 # Données volumineuses / sorties locales
 data/processed/*

@@ -26,6 +26,49 @@ st.set_page_config(
 
 init_schema()
 
+
+# ── Mise à jour automatique ───────────────────────────────────────────────────
+
+def _run_update_silent(run_date: str):
+    """Exécute la mise à jour pour toutes les stations sans interaction UI."""
+    from data_fetcher import fetch_station_data
+    from feature_builder import build_features
+    from predictor import predict
+    from database import upsert_mesure, upsert_prediction
+
+    for name in STATIONS:
+        try:
+            df = fetch_station_data(name)
+            for _, row in df.iterrows():
+                rec = {c: (None if pd.isna(v := row.get(c)) else v)
+                       for c in ["Q", "precip_mm", "t2m_mean", "t2m_max", "t2m_min",
+                                 "rh2m_pct", "pression_hpa", "sm_surface", "sm_root"]}
+                upsert_mesure(name, row["date"].strftime("%Y-%m-%d"), rec)
+            feat = build_features(df, name)
+            pred = predict(feat, name)
+            upsert_prediction(name, run_date,
+                              pred["q_j1"], pred["q_j3"],
+                              pred["niveau_j1"], pred["niveau_j3"])
+        except Exception as exc:
+            print(f"[AUTO-UPDATE] {name}: {exc}")
+
+
+def _maybe_auto_update():
+    """Déclenche une mise à jour si les données ont plus de 24h ou sont absentes."""
+    today = date.today().isoformat()
+    first_station = list(STATIONS.keys())[0]
+    last = get_last_prediction(first_station)
+    if last and last["run_date"] >= today:
+        return  # données fraîches
+
+    with st.spinner("🔄 Mise à jour automatique des données en cours…"):
+        _run_update_silent(today)
+    st.toast("✅ Données mises à jour automatiquement", icon="✅")
+
+
+_maybe_auto_update()
+
+
 # ── Thème ─────────────────────────────────────────────────────────────────────
 T = {
     "bg":       "#0E1117",
