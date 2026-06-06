@@ -404,7 +404,7 @@ def page_sms():
     st.title("Historique des alertes SMS")
     logs = get_sms_log(n=100)
     if not logs:
-        st.info("Aucune alerte envoyée. Configurez Twilio dans la page Configuration.")
+        st.info("Aucune alerte envoyée.")
         return
 
     df = pd.DataFrame(logs)
