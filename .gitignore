@@ -1,6 +1,6 @@
 # Modèles et datasets trop volumineux pour GitHub
 ml_datasets/
-trained_models_global/
+trained_models_global/rf_global.pkl
 
 # Données volumineuses / sorties locales
 data/processed/*
