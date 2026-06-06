@@ -1,0 +1,10 @@
+# Secrets Twilio — jamais sur GitHub
+.streamlit/secrets.toml
+
+# Base de données locale
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.env
