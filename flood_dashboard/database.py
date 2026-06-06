@@ -72,20 +72,22 @@ def upsert_mesure(station: str, date_str: str, row: dict):
     sql = """
         INSERT INTO mesures
             (station, date, Q, precip_mm, t2m_mean, t2m_max, t2m_min,
-             rh2m_pct, pression_hpa, sm_surface, sm_root)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             rh2m_pct, pression_hpa, sm_surface, sm_root, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(station, date) DO UPDATE SET
             Q=excluded.Q, precip_mm=excluded.precip_mm,
             t2m_mean=excluded.t2m_mean, t2m_max=excluded.t2m_max,
             t2m_min=excluded.t2m_min, rh2m_pct=excluded.rh2m_pct,
             pression_hpa=excluded.pression_hpa,
-            sm_surface=excluded.sm_surface, sm_root=excluded.sm_root
+            sm_surface=excluded.sm_surface, sm_root=excluded.sm_root,
+            source=excluded.source
     """
     values = (
         station, date_str,
         row.get("Q"), row.get("precip_mm"), row.get("t2m_mean"),
         row.get("t2m_max"), row.get("t2m_min"), row.get("rh2m_pct"),
         row.get("pression_hpa"), row.get("sm_surface"), row.get("sm_root"),
+        row.get("source") or "openmeteo",
     )
     with get_conn() as conn:
         conn.execute(sql, values)
@@ -184,10 +186,22 @@ def count_mesures(station: str) -> int:
     return dict(row)["n"]
 
 
-def sms_sent_today(station: str, run_date: str) -> bool:
+def get_last_source(station: str) -> Optional[str]:
+    """Source du débit de la mesure la plus récente (GloFAS, saisonnier…)."""
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM sms_log WHERE station = ? AND run_date = ?",
+            "SELECT source FROM mesures WHERE station = ? ORDER BY date DESC LIMIT 1",
+            (station,),
+        ).fetchone()
+    return dict(row)["source"] if row else None
+
+
+def sms_sent_today(station: str, run_date: str) -> bool:
+    """Vrai si un SMS a été effectivement envoyé (les échecs ne bloquent pas un nouvel essai)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM sms_log "
+            "WHERE station = ? AND run_date = ? AND statut = 'sent'",
             (station, run_date),
         ).fetchone()
     return dict(row)["n"] > 0

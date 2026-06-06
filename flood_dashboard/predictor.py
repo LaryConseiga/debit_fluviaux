@@ -1,35 +1,32 @@
 """
 Chargement des modèles XGBoost et prédiction du niveau d'alerte.
 """
-import pickle
 from functools import lru_cache
-from pathlib import Path
 
-import numpy as np
 import pandas as pd
+import xgboost as xgb
 
 from config import MODEL_DIR, STATIONS, ALERT_LEVELS
 
 
 # ── Chargement des modèles (singleton) ───────────────────────────────────────
 
+# Format natif XGBoost (.ubj) plutôt que pickle : lisible par les versions
+# ultérieures de xgboost. Après réentraînement : model.save_model("xgb_global_j1.ubj").
 @lru_cache(maxsize=1)
 def _load_models():
-    j1_path = MODEL_DIR / "xgb_global_j1.pkl"
-    j3_path = MODEL_DIR / "xgb_global_j3.pkl"
-
-    if not j1_path.exists() or not j3_path.exists():
-        raise FileNotFoundError(
-            f"Modèles introuvables dans {MODEL_DIR}. "
-            "Exécutez d'abord train_flood_model.ipynb §5."
-        )
-
-    with open(j1_path, "rb") as f:
-        model_j1 = pickle.load(f)
-    with open(j3_path, "rb") as f:
-        model_j3 = pickle.load(f)
-
-    return model_j1, model_j3
+    models = []
+    for horizon in ("j1", "j3"):
+        path = MODEL_DIR / f"xgb_global_{horizon}.ubj"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Modèle introuvable : {path}. Placez les modèles XGBoost "
+                "(xgb_global_j1.ubj, xgb_global_j3.ubj) dans trained_models_global/."
+            )
+        model = xgb.XGBRegressor()
+        model.load_model(path)
+        models.append(model)
+    return tuple(models)
 
 
 # ── Classification en niveau d'alerte ────────────────────────────────────────

@@ -2,6 +2,53 @@
 
 Sous-ensemble **Caravan** pour les bassins **Niger**, **Volta** et **Sénégal**, avec filtre **pays** optionnel.
 
+## Tableau de bord d'alerte crues (`flood_dashboard/`)
+
+Application Streamlit qui prévoit le débit à J+1 et J+3 pour 11 stations
+(Niger, Sénégal, Volta) avec deux modèles XGBoost, et envoie une alerte SMS
+(Twilio) quand une station passe en **Urgence**.
+
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+Au démarrage, l'application récupère 3 mois de météo Open-Meteo pour chaque
+station, calcule les prévisions et les enregistre dans `flood_dashboard/flood_alerts.db`
+(SQLite). La mise à jour est faite une fois par jour ; les stations en échec sont
+réessayées l'heure suivante.
+
+**Source du débit.** Quand le débit GloFAS n'est pas disponible, le débit utilisé
+est la médiane saisonnière de la station (`ml_datasets/seasonal_q.csv`). La source
+est affichée pour chaque station : une prévision basée sur la médiane saisonnière
+ne peut pas détecter une crue exceptionnelle.
+
+**Seuils.** Définis par station dans `flood_dashboard/config.py` (Q50 Vigilance,
+Q75 Alerte, Q90 Urgence). Le niveau qui déclenche un SMS est `SMS_MIN_LEVEL`
+(Urgence par défaut).
+
+**SMS (optionnel).** Renseigner `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+`TWILIO_FROM` et `TWILIO_TO` dans `.streamlit/secrets.toml` (local, non versionné)
+ou dans *Settings → Secrets* sur Streamlit Cloud. Sans ces valeurs, aucun SMS
+n'est envoyé. La base SQLite est effacée à chaque redémarrage de Streamlit Cloud,
+historique des SMS compris.
+
+**Modèles.** `trained_models_global/xgb_global_j1.ubj` et `xgb_global_j3.ubj`
+(format natif XGBoost, entraînés avec xgboost 3.2). Après un réentraînement,
+les enregistrer avec `model.save_model("xgb_global_j1.ubj")`. Les fichiers
+`lstm_*` ne sont pas utilisés par le tableau de bord.
+
+**Données observées (optionnel).** `python flood_dashboard/init_db.py` charge les
+débits observés si les CSV par station (`ml_datasets/<station>_ml.csv`, non
+versionnés) sont présents.
+
+**Tests.**
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests
+```
+
 ## Prérequis
 
 - Python 3.10+

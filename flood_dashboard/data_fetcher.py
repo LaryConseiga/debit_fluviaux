@@ -11,6 +11,7 @@ Stratégie par station :
 """
 from datetime import date, timedelta
 from functools import lru_cache
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,14 @@ from config import CSV_DIR, HISTORY_DAYS, STATIONS
 
 # ── URLs ──────────────────────────────────────────────────────────────────────
 _MAIN_URL = "https://api.open-meteo.com/v1/forecast"
+_HIST_FORECAST_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+_FLOOD_URL = "https://flood-api.open-meteo.com/v1/flood"
+
+# Période de référence pour les facteurs de correction de biais (années complètes)
+_BIAS_REF_START = "2022-01-01"
+_BIAS_REF_END   = "2025-12-31"
+# Facteurs hors de cet intervalle = sources incomparables → pas de correction
+_BIAS_RATIO_MIN, _BIAS_RATIO_MAX = 0.5, 5.0
 
 _DAILY_VARS = [
     "temperature_2m_max",
@@ -92,6 +101,57 @@ def _get_bias(station_name: str) -> dict:
     }
 
 
+# ── Facteurs de correction de biais (fixes, sur une longue période) ──────────
+# Le facteur compare la moyenne historique d'entraînement (bias_means.csv) à la
+# moyenne de la source temps réel sur plusieurs années complètes. Il est donc
+# constant : une crue en cours n'est pas ramenée vers la moyenne, contrairement
+# à un facteur calculé sur la fenêtre récente.
+
+def _long_term_mean(url: str, lat: float, lon: float, var: str) -> Optional[float]:
+    params = {
+        "latitude": lat, "longitude": lon,
+        "start_date": _BIAS_REF_START, "end_date": _BIAS_REF_END,
+        "daily": var,
+    }
+    try:
+        r = requests.get(url, params=params, timeout=60)
+        r.raise_for_status()
+        values = pd.Series(r.json()["daily"][var], dtype=float).dropna()
+    except Exception as exc:
+        print(f"[WARN] moyenne long terme {var} indisponible ({exc})")
+        return None
+    return float(values.mean()) if not values.empty else None
+
+
+def _ratio(reference: float, source_mean: Optional[float]) -> float:
+    if not reference or not source_mean or source_mean <= 0:
+        return 1.0
+    ratio = reference / source_mean
+    return ratio if _BIAS_RATIO_MIN <= ratio <= _BIAS_RATIO_MAX else 1.0
+
+
+_BIAS_FACTORS_CACHE: dict[str, dict] = {}
+
+
+def _bias_factors(station_name: str) -> dict:
+    """Facteurs multiplicatifs {"Q": .., "precip": ..} pour une station (1.0 = aucune correction)."""
+    if station_name in _BIAS_FACTORS_CACHE:
+        return _BIAS_FACTORS_CACHE[station_name]
+
+    cfg  = STATIONS[station_name]
+    bias = _get_bias(station_name)
+    precip_mean = _long_term_mean(_HIST_FORECAST_URL, cfg["lat"], cfg["lon"], "precipitation_sum")
+    q_mean      = _long_term_mean(_FLOOD_URL, cfg["lat"], cfg["lon"], "river_discharge")
+    factors = {
+        "Q":      _ratio(bias["Q"], q_mean),
+        "precip": _ratio(bias["precip"], precip_mean),
+    }
+    # Pas de mise en cache si un appel a échoué : on réessaiera au prochain passage
+    if precip_mean is not None and q_mean is not None:
+        _BIAS_FACTORS_CACHE[station_name] = factors
+    return factors
+
+
 # ── Appel API Open-Meteo ───────────────────────────────────────────────────────
 
 def _fetch_all_daily(lat: float, lon: float,
@@ -139,27 +199,19 @@ def fetch_station_data(station_name: str,
     """
     cfg = STATIONS[station_name]
     lat, lon = cfg["lat"], cfg["lon"]
-    bias = _get_bias(station_name)
 
     try:
         df = _fetch_all_daily(lat, lon, past_days=past_days)
+        factors = _bias_factors(station_name)
 
         # ── Correction biais précipitations ───────────────────────────────────
-        prec_mean = df["precip_mm"].dropna().mean()
-        if bias["precip"] and prec_mean and prec_mean > 0:
-            ratio = bias["precip"] / prec_mean
-            if 0.5 <= ratio <= 5.0:
-                df["precip_mm"] = df["precip_mm"] * ratio
+        df["precip_mm"] = df["precip_mm"] * factors["precip"]
 
         # ── Débit Q ───────────────────────────────────────────────────────────
         q_api_valid = df["Q_api"].notna().any()
 
         if q_api_valid:
-            q_api_mean = df["Q_api"].dropna().mean()
-            if bias["Q"] > 0 and q_api_mean > 0:
-                df["Q"] = df["Q_api"] * (bias["Q"] / q_api_mean)
-            else:
-                df["Q"] = df["Q_api"]
+            df["Q"] = df["Q_api"] * factors["Q"]
             df["source"] = "temps_reel_glofas"
             print(f"[INFO] {station_name} — GloFAS OK, météo réelle")
         else:

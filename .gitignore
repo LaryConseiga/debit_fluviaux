@@ -1,7 +1,6 @@
-# Modèles trop volumineux pour GitHub
+# Modèle trop volumineux pour GitHub (143 Mo)
 trained_models_global/rf_global.pkl
-trained_models_global/lstm_global.keras
-trained_models_global/lstm_scalers_y.pkl
+# Les fichiers lstm_* sont versionnés mais pas utilisés par le tableau de bord
 
 # CSV bruts (130 MB) — remplacés par seasonal_q.csv et bias_means.csv
 ml_datasets/

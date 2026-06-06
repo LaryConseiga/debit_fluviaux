@@ -4,7 +4,7 @@ Envoi des alertes WhatsApp/SMS via Twilio (messages en français, grand public).
 from datetime import datetime, timedelta
 from typing import Optional
 
-from config import ALERT_LEVELS, STATIONS
+from config import ALERT_LEVELS, SMS_MIN_LEVEL, STATIONS
 
 # Descriptions lisibles du danger par niveau
 _DANGER = {
@@ -103,8 +103,9 @@ def send_alert(station_name: str, run_date: str,
         message : str  — texte complet
     """
     # ── Conditions d'envoi ────────────────────────────────────────────────────
-    if niveau_j1 < 2:
-        return {"sent": False, "reason": "niveau < Alerte", "sid": None, "message": ""}
+    if niveau_j1 < SMS_MIN_LEVEL:
+        label = ALERT_LEVELS[SMS_MIN_LEVEL]["label"]
+        return {"sent": False, "reason": f"niveau < {label}", "sid": None, "message": ""}
 
     message = _format_message(
         station_name, run_date, q_actuel, q_j1, q_j3,

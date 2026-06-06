@@ -2,6 +2,7 @@
 Dashboard d'alerte précoce aux crues — Afrique de l'Ouest
 """
 import sys
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -11,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import pandas as pd
 import streamlit as st
 
-from config import ALERT_ACTIONS, ALERT_LEVELS, STATIONS
+from config import ALERT_ACTIONS, ALERT_LEVELS, SMS_MIN_LEVEL, STATIONS
 from database import (
-    get_last_prediction, get_mesures, get_predictions_history,
+    get_last_prediction, get_last_source, get_mesures, get_predictions_history,
     get_sms_log, get_previous_niveau, init_schema,
 )
 
@@ -29,20 +30,21 @@ init_schema()
 
 # ── Mise à jour automatique ───────────────────────────────────────────────────
 
-def _run_update_silent(run_date: str):
-    """Exécute la mise à jour pour toutes les stations sans interaction UI."""
+def _run_update_silent(run_date: str, stations: list[str]):
+    """Exécute la mise à jour pour les stations données sans interaction UI."""
     from data_fetcher import fetch_station_data
     from feature_builder import build_features
     from predictor import predict
     from database import upsert_mesure, upsert_prediction
 
-    for name in STATIONS:
+    for name in stations:
         try:
             df = fetch_station_data(name)
             for _, row in df.iterrows():
                 rec = {c: (None if pd.isna(v := row.get(c)) else v)
                        for c in ["Q", "precip_mm", "t2m_mean", "t2m_max", "t2m_min",
-                                 "rh2m_pct", "pression_hpa", "sm_surface", "sm_root"]}
+                                 "rh2m_pct", "pression_hpa", "sm_surface", "sm_root",
+                                 "source"]}
                 upsert_mesure(name, row["date"].strftime("%Y-%m-%d"), rec)
             feat = build_features(df, name)
             pred = predict(feat, name)
@@ -55,20 +57,34 @@ def _run_update_silent(run_date: str):
             print(f"[AUTO-UPDATE] {name}: {exc}")
 
 
-def _maybe_auto_update():
-    """Déclenche une mise à jour si les données ont plus de 24h ou sont absentes."""
-    today = date.today().isoformat()
-    first_station = list(STATIONS.keys())[0]
-    last = get_last_prediction(first_station)
-    if last and last["run_date"] >= today:
-        return  # données fraîches
+def _stations_to_update(run_date: str) -> list[str]:
+    """Stations sans prédiction pour run_date."""
+    missing = []
+    for name in STATIONS:
+        last = get_last_prediction(name)
+        if not last or last["run_date"] < run_date:
+            missing.append(name)
+    return missing
 
-    with st.spinner("🔄 Mise à jour automatique des données en cours…"):
-        _run_update_silent(today)
+
+@st.cache_resource
+def _update_lock() -> threading.Lock:
+    return threading.Lock()
+
+
+# Le cache évite de relancer la mise à jour à chaque interaction : au plus un
+# essai par heure et par jour. Les stations en échec sont réessayées l'heure suivante.
+@st.cache_data(ttl=3600, show_spinner="🔄 Mise à jour automatique des données en cours…")
+def _auto_update(run_date: str) -> int:
+    with _update_lock():  # une seule mise à jour à la fois si plusieurs visiteurs
+        missing = _stations_to_update(run_date)
+        if missing:
+            _run_update_silent(run_date, missing)
+    return len(missing)
+
+
+if _auto_update(date.today().isoformat()):
     st.toast("✅ Données mises à jour automatiquement", icon="✅")
-
-
-_maybe_auto_update()
 
 
 # ── Thème ─────────────────────────────────────────────────────────────────────
@@ -176,6 +192,18 @@ def section(title):
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
 
 
+_SEASONAL_SOURCE = "temps_reel_meteo+Q_saisonnier"
+_SOURCE_LABELS = {
+    "temps_reel_glofas": "GloFAS (temps réel)",
+    _SEASONAL_SOURCE:    "Médiane saisonnière",
+    "historique_csv":    "Historique observé",
+}
+
+
+def source_label(source: Optional[str]) -> str:
+    return _SOURCE_LABELS.get(source, source or "—")
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(f"### Alerte Précoce Crues")
@@ -202,6 +230,7 @@ def page_vue_globale():
     rows = []
     for name, cfg in STATIONS.items():
         pred = get_last_prediction(name)
+        source = source_label(get_last_source(name))
         if pred:
             n1, n3 = pred["niveau_j1"], pred["niveau_j3"]
             rows.append({
@@ -212,6 +241,7 @@ def page_vue_globale():
                 "Débit J+1":     f"{pred['Q_predit_j1']:,.0f} m³/s",
                 "Alerte J+3":    f"{ALERT_LEVELS[n3]['emoji']} {ALERT_LEVELS[n3]['label']}",
                 "Débit J+3":     f"{pred['Q_predit_j3']:,.0f} m³/s",
+                "Source débit":  source,
                 "Mise à jour":   str(pred["run_date"]),
                 "lat": cfg["lat"], "lon": cfg["lon"],
             })
@@ -220,6 +250,7 @@ def page_vue_globale():
                 "Station":    name, "Bassin": cfg["basin"], "_n1": -1,
                 "Alerte J+1": "—", "Débit J+1": "—",
                 "Alerte J+3": "—", "Débit J+3": "—",
+                "Source débit": source,
                 "Mise à jour": "Aucune",
                 "lat": cfg["lat"], "lon": cfg["lon"],
             })
@@ -244,7 +275,7 @@ def page_vue_globale():
         "Station", "Bassin",
         "Alerte J+1", "Débit J+1",
         "Alerte J+3", "Débit J+3",
-        "Mise à jour",
+        "Source débit", "Mise à jour",
     ]]
     st.dataframe(display, use_container_width=True, hide_index=True)
 
@@ -276,6 +307,16 @@ def page_detail():
         with c1: kpi("Débit prédit J+1",  f"{pred['Q_predit_j1']:,.0f} m³/s", al1["color"])
         with c2: kpi("Débit prédit J+3",  f"{pred['Q_predit_j3']:,.0f} m³/s", al3["color"])
         with c3: kpi("Dernière mise à jour", str(pred["run_date"]))
+
+        source = get_last_source(station)
+        if source == _SEASONAL_SOURCE:
+            st.warning(
+                "Débit non mesuré pour cette station : la prévision repose sur la "
+                "médiane saisonnière du débit et sur la météo réelle. Elle ne peut "
+                "pas détecter une crue exceptionnelle."
+            )
+        else:
+            st.caption(f"Source du débit : {source_label(source)}")
     else:
         st.info("Aucune prédiction disponible. Lancez une mise à jour.")
 
@@ -376,8 +417,9 @@ def _send_sms_if_configured(station_name, run_date, q_actuel, pred, forcer=False
     from database import get_previous_niveau, log_sms, sms_sent_today
 
     # Pas de message si niveau insuffisant
-    if pred["niveau_j1"] < 2:
-        return {"sent": False, "reason": "niveau < Alerte", "sid": None, "message": ""}
+    if pred["niveau_j1"] < SMS_MIN_LEVEL:
+        label = ALERT_LEVELS[SMS_MIN_LEVEL]["label"]
+        return {"sent": False, "reason": f"niveau < {label}", "sid": None, "message": ""}
 
     # Un seul message par station par jour — sauf si l'utilisateur force l'envoi
     if not forcer and sms_sent_today(station_name, run_date):
@@ -393,6 +435,11 @@ def _send_sms_if_configured(station_name, run_date, q_actuel, pred, forcer=False
     if result["sent"]:
         log_sms(station_name, run_date, pred["niveau_j1"],
                 result["message"], result["sid"])
+    else:
+        # Échec Twilio ou dépendance manquante : tracé pour être visible dans l'historique
+        log_sms(station_name, run_date, pred["niveau_j1"],
+                result["message"] or "—", None,
+                statut=f"échec : {result['reason']}"[:200])
     return result
 
 
@@ -412,10 +459,12 @@ def page_sms():
         lambda n: f"{ALERT_LEVELS[n]['emoji']} {ALERT_LEVELS[n]['label']}"
     )
 
-    c1, c2, c3 = st.columns(3)
-    with c1: kpi("Total alertes",    str(len(df)),                     T["accent"])
-    with c2: kpi("Stations touchées", str(df["station"].nunique()),     "#FF9800")
-    with c3: kpi("Urgences",          str((df["niveau"] == 3).sum()),   "#F44336")
+    sent = df[df["statut"] == "sent"]
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: kpi("Alertes envoyées",  str(len(sent)),                     T["accent"])
+    with c2: kpi("Stations touchées", str(sent["station"].nunique()),     "#FF9800")
+    with c3: kpi("Urgences",          str((sent["niveau"] == 3).sum()),   "#F44336")
+    with c4: kpi("Échecs d'envoi",    str(len(df) - len(sent)),           T["subtext"])
 
     st.divider()
     display = df[["ts","station","Niveau","statut","sid"]].copy()
@@ -423,7 +472,8 @@ def page_sms():
     st.dataframe(display, use_container_width=True, hide_index=True)
 
     with st.expander("Dernier message envoyé"):
-        st.code(logs[0].get("message","—"), language=None)
+        last_sent = next((l for l in logs if l["statut"] == "sent"), None)
+        st.code(last_sent["message"] if last_sent else "—", language=None)
 
 
 

@@ -5,7 +5,7 @@ Stations, coordonnées GPS, seuils hydrologiques, chemins modèles.
 from pathlib import Path
 
 # ── Répertoires ───────────────────────────────────────────────────────────────
-ROOT_DIR   = Path(__file__).parent.parent          # donnees_debit_fluviaux/
+ROOT_DIR   = Path(__file__).parent.parent          # racine du dépôt
 MODEL_DIR  = ROOT_DIR / "trained_models_global"
 CSV_DIR    = ROOT_DIR / "ml_datasets"
 
@@ -92,6 +92,10 @@ ALERT_LEVELS = {
     2: {"label": "Alerte",    "color": "#FF9800", "emoji": "🟠"},
     3: {"label": "Urgence",   "color": "#F44336", "emoji": "🔴"},
 }
+
+# Niveau minimal (J+1) déclenchant un SMS. Les seuils Q50/Q75/Q90 sont bas
+# (Q75 ≈ 90 jours/an) : on n'alerte la population qu'en Urgence (Q90).
+SMS_MIN_LEVEL = 3
 
 ALERT_ACTIONS = {
     0: "Aucune action requise",
