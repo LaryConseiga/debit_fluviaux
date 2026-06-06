@@ -49,6 +49,8 @@ def _run_update_silent(run_date: str):
             upsert_prediction(name, run_date,
                               pred["q_j1"], pred["q_j3"],
                               pred["niveau_j1"], pred["niveau_j3"])
+            q_actuel = float(df["Q"].dropna().iloc[-1]) if not df["Q"].dropna().empty else 0.0
+            _send_sms_if_configured(name, run_date, q_actuel, pred)
         except Exception as exc:
             print(f"[AUTO-UPDATE] {name}: {exc}")
 
@@ -182,7 +184,7 @@ with st.sidebar:
 
     page = st.radio(
         "Page",
-        ["Vue globale", "Détail station", "Mise à jour", "Historique SMS"],
+        ["Vue globale", "Détail station", "Historique SMS"],
         label_visibility="collapsed",
     )
 
@@ -342,85 +344,6 @@ def page_detail():
         st.info("Pas encore de mesures.")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PAGE 3 — Mise à jour
-# ═════════════════════════════════════════════════════════════════════════════
-
-def page_mise_a_jour():
-    st.title("Mise à jour des données")
-
-    station_choix = st.selectbox(
-        "Station à mettre à jour",
-        ["Toutes les stations"] + list(STATIONS.keys()),
-    )
-    forcer_envoi = st.checkbox(
-        "Forcer l'envoi WhatsApp (même si déjà envoyé aujourd'hui)",
-        value=False,
-    )
-
-    if st.button("Lancer la mise à jour", type="primary"):
-        from data_fetcher import fetch_station_data
-        from feature_builder import build_features
-        from predictor import predict
-        from database import upsert_mesure, upsert_prediction
-
-        run_date = date.today().isoformat()
-        a_traiter = (list(STATIONS.keys()) if station_choix == "Toutes les stations"
-                     else [station_choix])
-
-        progress = st.progress(0)
-        status   = st.empty()
-        messages = []
-
-        for idx, name in enumerate(a_traiter):
-            status.info(f"Traitement de {name}…")
-            try:
-                df = fetch_station_data(name)
-
-                for _, row in df.iterrows():
-                    rec = {c: (None if pd.isna(v := row.get(c)) else v)
-                           for c in ["Q","precip_mm","t2m_mean","t2m_max","t2m_min",
-                                     "rh2m_pct","pression_hpa","sm_surface","sm_root"]}
-                    upsert_mesure(name, row["date"].strftime("%Y-%m-%d"), rec)
-
-                feat = build_features(df, name)
-                pred = predict(feat, name)
-                upsert_prediction(name, run_date,
-                                  pred["q_j1"], pred["q_j3"],
-                                  pred["niveau_j1"], pred["niveau_j3"])
-
-                src = df.get("source", pd.Series(["?"])).iloc[-1]
-                al  = ALERT_LEVELS[pred["niveau_j1"]]
-
-                q_series = df["Q"].dropna()
-                q_actuel = float(q_series.iloc[-1]) if not q_series.empty else 0.0
-                sms_info = _send_sms_if_configured(name, run_date, q_actuel, pred,
-                                                   forcer=forcer_envoi)
-
-                sms_txt = ""
-                if sms_info is None:
-                    sms_txt = " · WhatsApp : Twilio non configuré"
-                elif sms_info.get("sent"):
-                    sms_txt = " · ✅ WhatsApp envoyé"
-                else:
-                    sms_txt = f" · WhatsApp non envoyé ({sms_info.get('reason','?')})"
-
-                messages.append(
-                    f"{'✅' if not sms_info or sms_info.get('sent') else '⚠️'}  **{name}** — "
-                    f"J+1 : {al['emoji']} {al['label']} ({pred['q_j1']:,.0f} m³/s)"
-                    f" · source : {src}{sms_txt}"
-                )
-
-            except Exception as exc:
-                messages.append(f"❌  **{name}** — {exc}")
-
-            progress.progress((idx + 1) / len(a_traiter))
-
-        status.empty()
-        st.success(f"Terminé — {len(a_traiter)} station(s) traitée(s)")
-        for m in messages:
-            st.markdown(m)
-
 
 def _get_twilio_cfg() -> Optional[dict]:
     """Lit les credentials Twilio depuis st.secrets ou les variables d'environnement."""
@@ -510,7 +433,5 @@ if page == "Vue globale":
     page_vue_globale()
 elif page == "Détail station":
     page_detail()
-elif page == "Mise à jour":
-    page_mise_a_jour()
 elif page == "Historique SMS":
     page_sms()
